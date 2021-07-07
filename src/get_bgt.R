@@ -1,62 +1,76 @@
 
 # BGT Data 
+# DB Connect
+conn <- RPostgreSQL::dbConnect(drv = RPostgreSQL::PostgreSQL(),
+                               dbname = "sdad",
+                               host =  "postgis1",
+                               port = 5432,
+                               user = Sys.getenv("DB_USR"),
+                               password = Sys.getenv("DB_PWD"))
+# Reading in BGT Data 
+bgt <- RPostgreSQL::dbGetQuery(conn = conn,
+                               statement = "SELECT
+                               onet,
+                               soc,
+                               maxdegree,
+                               sector,
+                               lat,
+                               lon,
+                               fipsstate, 
+                               fipscounty,
+                               id
+                               FROM bgt_job.main
+                               WHERE jobdate >= '2019-01-01' AND jobdate <= '2019-12-31' AND jobid is not null AND soc is not null")
 
+
+# Reading in certification data                              
+bgt_cert <- RPostgreSQL::dbGetQuery(conn = conn,
+                                    statement = "SELECT id, jobdate, certification FROM bgt_job.cert WHERE jobdate >= '2019-01-01' AND jobdate <= '2019-12-31'")
+
+# DB Disconnect
+RPostgreSQL::dbDisconnect(conn)
+
+
+# Libraries 
 library(RPostgreSQL)
 library(ggplot2)
 library(readxl)
 library(dplyr)
 
 
-# DB Connect
-conn <- RPostgreSQL::dbConnect(drv = RPostgreSQL::PostgreSQL(),
-                               dbname = "sdad",
-                               host =  "postgis1",
-                               port = 5432,
-                               user = "unq6jg",
-                               password = "unq6jg")
-
-setwd("/project/biocomplexity/sdad/projects_data/ncses/stw/original/wioa_2021/stw_2021")
+# Reading in STW SOC Codes 
 stw <- read_xlsx("STW_2021.xlsx")
-stw$SOC <- as.integer(stw$SOC)
 
-View(stw)
-
-tbl <- RPostgreSQL::dbGetQuery(conn = conn, 
-                               statement = "SELECT *
-                               FROM bgt_job.main
-                               WHERE jobdate >= '2019-01-01' AND jobid is not null")
-
-tbl1 <- RPostgreSQL::dbGetQuery(conn = conn,
-                                statement = "SELECT
-                                onet,
-                                soc,
-                                maxdegree,
-                                sector,
-                                lat,
-                                lon,
-                                fipsstate,
-                                fipscounty,
-                                jobid
-                                FROM bgt_job.main
-                                WHERE jobdate >= '2019-01-01' AND jobid is not null
-                                LIMIT 1000")
-                              
-
-View(tbl1)
-summary(tbl)
-summary(tbl$minsalary)
-
-tbl1$soc <- as.integer(tbl1$soc)
+# Transforming the STW data 
+stw$SOC <- gsub("-", "", stw$SOC) # removing - in soc code 
+stw$SOC <- as.integer(stw$SOC) # making soc code integer 
+# View(stw)
 
 
+# Transforming BGT data 
+bgt$soc <- gsub("-", "", bgt$soc) # removing - in soc code 
+bgt$soc <- as.integer(bgt$soc) # making soc code an integer  
 
-d <- tbl1 %>% left_join(stw, by = c("soc" = "SOC"))
+# Joining the data source bgt and stw 
+merged <- bgt %>% left_join(stw, by = c("soc" = "SOC"))  # merging on soc variable 
+merged_no_na <- merged[is.na(merged$NAME) == FALSE,] # removing variables with no name 
 
-View(d)
 
-d2 <- d[is.na(d$NAME) == FALSE,]
+# Joining the data source bgt_main (with no na's and no non-stw jobs) and bgt cert 
+merged_cert <- merged_no_na %>% left_join(bgt_cert, by = c("id" = "id")) # merging on id variable 
+bgt_stw_cred <- merged_cert[is.na(merged_cert$certification) == FALSE,] # removing jobs with no certification 
 
-View(d2)
+View(bgt_stw_cred)
+# Pulling out credential names and frequency 
+name_count <- table(bgt_stw_cred$certification, bgt_stw_cred$soc)
+View(name_count)
 
-# DB Disconnect
-RPostgreSQL::dbDisconnect(conn)
+
+# Writing a table with just credentials 
+write.table(name_count, file = "bgt_credentials.txt", sep = ",")
+bgt_credentials <- read.delim("bgt_credentials.txt", sep =",")
+
+
+View(bgt_credentials)
+
+
